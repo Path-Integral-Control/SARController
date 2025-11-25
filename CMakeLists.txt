@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.8)
-project(auav_pylon_2026)
+cmake_minimum_required(VERSION 3.10)
+project(sar_controller)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -14,10 +14,10 @@ find_package(nav_msgs REQUIRED)
 
 include_directories(include)
 
-ament_python_install_package(auav_pylon_2026)
+ament_python_install_package(sar_controller)
 
 install(PROGRAMS
-  scripts/sim_tecs_ros_xtrack.py
+  scripts/sar_supervisor.py
   DESTINATION lib/${PROJECT_NAME};
   )
 

@@ -11,9 +11,9 @@ from tf_transformations import euler_from_quaternion
 import casadi as ca
 import numpy as np
 
-from auav_pylon_2026.tecs_controller_xtrack_sample import TECSControl_cub
+from sar_controller.sar_tracker import SARTracker
 
-from auav_pylon_2026.cross_tracker_nav_sample import *
+from sar_controller.sar_planner import *
 
 
 def wrap(x):
@@ -26,13 +26,13 @@ alt = 4  # Desired Cruising altitude (m)
 # ## SIM
 alt = 7.0
 control_point = [
-    (-10, -5, alt),
-    (-30.0, -10, alt),
-    (-30, -40.0, alt),
-    (30.00, -30.0, alt),
-    (30, 5.0, alt),
-    (10, 5, alt),
-    (-10, -5, alt),
+    [-10, -5, alt],
+    [-30.0, -10, alt],
+    [-30, -40.0, alt],
+    [30.00, -30.0, alt],
+    [30, 5.0, alt],
+    [10, 5, alt],
+    [-10, -5, alt],
 ]  # Rectangle Circuit Full Facility, const altitude
 
 # ## PURT Circuit in Real Facility
@@ -136,15 +136,15 @@ class PIDPublisher(Node):
         self.yaw = 0.0
         self.time = 0
         self.dt = 0.01
-        self.tecs_control = TECSControl_cub(self.dt, "sim")
+        self.tracker = SARTracker(self.dt, "sim")
         self.current_WP_ind = 0  # Starting WP index
         self.last_WP_ind = 1  # Last Waypoint Index, this gets overwritten later
-        self.wpt_planner = XTrack_NAV_lookAhead(
-            self.dt, control_point, self.current_WP_ind
+        self.planner = SARPlanner(
+            self.dt, control_point, self.current_WP_ind, np.array([self.x, self.y, self.z])
         )
-        self.wpt_planner.path_distance_buf = 5.0  # 2.0
-        self.wpt_planner.wpt_switching_distance = 1.0  # 4.0
-        self.wpt_planner.v_cruise = 10.0  # 0.5
+        self.planner.path_distance_buf = 5.0  # 2.0
+        self.planner.wpt_switching_distance = 1.0  # 4.0
+        self.planner.v_cruise = 10.0  # 0.5
         self.flight_mode = "takeoff"
         self.pub_flight_mode = self.create_publisher(String, "flight_mode", 10)
         self.takeoff_time = 0.0
@@ -183,6 +183,8 @@ class PIDPublisher(Node):
         self.vy_est = None
         self.vy_est_last = None
         self.vz_est = None
+        self.a_est = None
+        self.a_est_last = None
         self.gamma_est = None
         self.gamma_est_last = None
         self.vdot_est = None
@@ -207,6 +209,7 @@ class PIDPublisher(Node):
             "vy_est": 0.0,
             "vz_est": 0.0,
             "v_est": 0.0,
+            "a_est": 0.0,
             "gamma_est": 0.0,
             "vdot_est": 0.0,
             "p_est": 0.0,
@@ -306,6 +309,8 @@ class PIDPublisher(Node):
             np.clip(vz_new / denom, -1.0, 1.0)
         )  # Flight path angle (gamma): asin(vz / |v|)
 
+        a_new = -(self.pitch - gamma_new)
+
         vdot_new = (
             speed_new - self.prev_speed
         )  # / self.dt # Acceleration magnitutde diff
@@ -324,6 +329,7 @@ class PIDPublisher(Node):
                 "vz": vz_new,
                 "v": speed_new,
                 "gamma": gamma_new,
+                "a": a_new,
                 "vdot": vdot_new,
                 "p": p_new,
                 "q": q_new,
@@ -344,6 +350,7 @@ class PIDPublisher(Node):
             "vz_est": self.vz_est,  # Velocity
             "v_est": self.v_est,
             "gamma_est": self.gamma_est,
+            "a_est": self.a_est,
             "vdot_est": self.vdot_est,
             "p_est": self.p_est,
             "q_est": self.q_est,
@@ -354,6 +361,9 @@ class PIDPublisher(Node):
         self.prev_x, self.prev_y, self.prev_z = self.x, self.y, self.z
         self.prev_roll, self.prev_pitch, self.prev_yaw = self.roll, self.pitch, self.yaw
         self.prev_speed = self.v_est
+
+    def logger_callback(self, string):
+        self.get_logger().info(string)
 
     def pub_sports_cub(self):
         self.last_WP_ind = np.shape(control_point)[0]  # determine last waypoint
@@ -406,12 +416,12 @@ class PIDPublisher(Node):
         if self.current_WP_ind == self.last_WP_ind:
             self.current_WP_ind = 0  # go back to cruise altitude waypoint
             self.end_cruise = False
-            self.wpt_planner = XTrack_NAV_lookAhead(
-                self.dt, control_point, self.current_WP_ind
+            self.planner = SARPlanner(
+                self.dt, control_point, self.current_WP_ind, np.array([self.x, self.y, self.z])
             )
 
             print(
-                "Continueing circuit...Returning to Waypoint %s" % (self.current_WP_ind)
+                "Continuing circuit...Returning to Waypoint %s" % (self.current_WP_ind)
             )
 
         if self.flight_mode == "airborne":
@@ -419,54 +429,34 @@ class PIDPublisher(Node):
             if self.current_WP_ind == self.last_WP_ind:  # End Cruise
                 self.current_WP_ind = 0  # go back to cruise altitude waypoint
                 self.end_cruise = False
-                self.wpt_planner = XTrack_NAV_lookAhead(
-                    self.dt, control_point, self.current_WP_ind
+                self.planner = SARPlanner(
+                    self.dt, control_point, self.current_WP_ind, np.array([self.x, self.y, self.z])
                 )
             else:
-                v_array = [self.vx_est, self.vy_est, self.vz_est]
+                v_array = [self.vx_est, self.vy_est]
 
-                des_v, des_gamma, des_heading, along_track_err, cross_track_err = (
-                    self.wpt_planner.wp_tracker(
-                        control_point,
-                        self.x_est,
-                        self.y_est,
-                        self.z_est,
-                        v_array,
-                        verbose=False,
+                rate, speed, alti = (
+                    self.planner.plan(
+                        np.array([self.x, self.y]),
+                        np.array(v_array),
+                        logger=self.logger_callback
                     )
                 )
 
-                ## Calculating Desired Acceleration based on desired velocity
-                if self.prev_v is None:
-                    self.prev_v = self.v_est
-                K_V = 1.0  # 2.0
-                self.des_a = K_V * (
-                    des_v - np.abs(self.v_est)
-                )  # Desired Acceleration from current velocity
-
-                self.prev_des_a = self.des_a
-                self.prev_des_v = des_v
-
-                self.ref_data = {
-                    "des_v": des_v,
-                    "des_gamma": des_gamma,
-                    "des_heading": des_heading,
-                    "des_a": self.des_a,
-                }
-
                 self.aileron, self.elev, self.throttle, self.rudder = (
-                    self.tecs_control.compute_control(
-                        int(self.time / self.dt), self.ref_data, self.actual_data
+                    self.tracker.compute_control(
+                        rate, speed, alti, self.actual_data#, logger=self.logger_callback
                     )
                 )
                 # self.current_WP_ind = self.wpt_planner.check_arrived(self.x_est, self.y_est, self.z_est)
-                self.current_WP_ind = self.wpt_planner.check_arrived(
-                    along_track_err, v_array, verbose=False
-                )
+                self.current_WP_ind = self.planner.get_index()
 
                 self.get_logger().info(
-                    "Control Command: Aileron: %0.2f: Elevator: %0.2f; Throttle: %0.2f Rudder: %0.2f"
+                    "Control Commands: Aileron: %0.2f: Elevator: %0.2f; Throttle: %0.2f Rudder: %0.2f"
                     % (self.aileron, self.elev, self.throttle, self.rudder)
+                )
+                self.get_logger().info(
+                    f"Pos: [{self.x}, {self.y}, {self.z}], Vel: [{self.vx_est}, {self.vy_est}, {self.vz_est}]"
                 )
 
         # Publish Reference Data for Analysis

@@ -30,7 +30,42 @@ trim_rud: 0.0 # -0.2
 trim_ail: 0.0
 
 # --- Vehicle Parameters ---
-mass: 0.057 # kg
+mass: 0.057
+XCG: 0.25
+XAC: 0.25
+S: 0.05553
+rho: 1.225
+g: 9.81
+Jx: 0.0002
+Jy: 0.00026
+Jz: 0.00032
+Jxz: 0.0
+cbar: 0.09
+span: 0.617
+Cm0: 0.0314
+Clda: 0.1
+Cldr: 0.05
+Cmde: 0.9
+Cndr: 0.12
+Cnda: 0.03
+CYda: 0.02
+CYdr: -0.12
+CL0: 0.2
+CLa: 5.2
+Cma: -0.6
+Cmq: -0.1
+CD0: 0.09
+CDCLS: 0.062
+Cnb: 0.1
+Clp: -1.3
+Cnr: -0.12
+Cnp: -0.1
+Clr: 0.1
+CYb: -0.65
+CYr: 0.25
+CYp: 0.15
+T_max: 0.56
+a_stall: 0.3
 
 # --- Lateral Roll Control in Stabilized Sim mode---
 k_chi: 1.20                # [1/s] maps heading error -> desired heading rate
