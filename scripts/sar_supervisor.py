@@ -15,6 +15,8 @@ from sar_controller.sar_tracker import SARTracker
 
 from sar_controller.sar_planner import *
 
+from sar_controller.sar_optimizer import optimize
+
 
 def wrap(x):
     return (x % 1) - 1
@@ -40,9 +42,7 @@ control_point = [
 
 
 # Get coordinates for reference line
-ref_x_list = [point[0] for point in control_point]
-ref_y_list = [point[1] for point in control_point]
-ref_z_list = [point[2] for point in control_point]
+
 
 
 ###### FILTER ######
@@ -77,10 +77,14 @@ def _lpf_many(self, mapping: dict, alpha: float):
 
 
 ##################
+ref_x_list = []
+ref_y_list = []
+ref_z_list = []
 
 
 class PIDPublisher(Node):
     def __init__(self):
+        global ref_x_list, ref_y_list, ref_z_list
         super().__init__("sports_cub_publisher")
 
         # Set up Parameter
@@ -139,8 +143,17 @@ class PIDPublisher(Node):
         self.tracker = SARTracker(self.dt, "sim")
         self.current_WP_ind = 0  # Starting WP index
         self.last_WP_ind = 1  # Last Waypoint Index, this gets overwritten later
+
+        self.waypoints, pylons = optimize("route", np.array([13, -5]), gain=20)
+
+        pylons.append(pylons[0])
+        alt = 7
+        ref_x_list = [point[0] for point in pylons]
+        ref_y_list = [point[1] for point in pylons]
+        ref_z_list = [alt for _ in pylons]
+
         self.planner = SARPlanner(
-            self.dt, control_point, self.current_WP_ind, np.array([self.x, self.y, self.z])
+            self.dt, self.waypoints, self.current_WP_ind, np.array([self.x, self.y, self.z])
         )
         self.planner.path_distance_buf = 5.0  # 2.0
         self.planner.wpt_switching_distance = 1.0  # 4.0
@@ -417,7 +430,7 @@ class PIDPublisher(Node):
             self.current_WP_ind = 0  # go back to cruise altitude waypoint
             self.end_cruise = False
             self.planner = SARPlanner(
-                self.dt, control_point, self.current_WP_ind, np.array([self.x, self.y, self.z])
+                self.dt, self.waypoints, self.current_WP_ind, np.array([self.x, self.y, self.z])
             )
 
             print(
@@ -430,7 +443,7 @@ class PIDPublisher(Node):
                 self.current_WP_ind = 0  # go back to cruise altitude waypoint
                 self.end_cruise = False
                 self.planner = SARPlanner(
-                    self.dt, control_point, self.current_WP_ind, np.array([self.x, self.y, self.z])
+                    self.dt, self.waypoints, self.current_WP_ind, np.array([self.x, self.y, self.z])
                 )
             else:
                 v_array = [self.vx_est, self.vy_est]
@@ -451,6 +464,7 @@ class PIDPublisher(Node):
                 # self.current_WP_ind = self.wpt_planner.check_arrived(self.x_est, self.y_est, self.z_est)
                 self.current_WP_ind = self.planner.get_index()
 
+                """
                 self.get_logger().info(
                     "Control Commands: Aileron: %0.2f: Elevator: %0.2f; Throttle: %0.2f Rudder: %0.2f"
                     % (self.aileron, self.elev, self.throttle, self.rudder)
@@ -458,6 +472,7 @@ class PIDPublisher(Node):
                 self.get_logger().info(
                     f"Pos: [{self.x}, {self.y}, {self.z}], Vel: [{self.vx_est}, {self.vy_est}, {self.vz_est}]"
                 )
+                """
 
         # Publish Reference Data for Analysis
         ref_val_msg = Float32MultiArray()

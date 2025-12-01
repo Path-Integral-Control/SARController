@@ -25,83 +25,38 @@ def ang_diff(angle1, angle2):
 class SARPlanner:
     def __init__(self, dt, waypoints, start, pos):
         self.dt = dt
-        self.idx = start
+        self.idx = start + 1
         self.gate_idx = 1
         self.rate = 0
-        self.waypoints = [np.array(pt[0:2]) for pt in waypoints]
-        self.gates = self.init_gates(self.waypoints, pos[0:2])
-        for gate in self.gates:
-            print(gate)
-
-    def init_gates(self, waypoints, pos):
-        gates = [pos]
-        for i, waypoint in enumerate(waypoints):
-            app = waypoint - waypoints[i - 1]
-            if np.linalg.norm(app) < 1:
-                continue
-            dep = waypoints[(i + 1) % len(waypoints)] - waypoint
-            appl = np.linalg.norm(app) + 0.01
-            depl = np.linalg.norm(dep) + 0.01
-            gates.append(waypoint + (app / appl - dep / depl) * 2)
-        print(gates)
-        return gates
+        self.waypoints = [start] + [np.array(pt[0:2]) for pt in waypoints]
 
 
     def plan(self, pos, vel, logger=None):
-        gate = self.gates[self.gate_idx]
         waypoint = self.waypoints[self.idx]
         wlast = self.waypoints[self.idx - 1]
         wpath = waypoint - wlast
         woffset = pos - waypoint
+        logger(f"[SARPlanner] Finding Waypoint, Pos: {pos}, Vel: {vel}, Waypoint: {waypoint}")
         if np.dot(wpath, woffset) > 0:
             self.idx += 1
             if logger is not None:
                 logger(f"[SARPlanner] Passed Waypoint, Pos: {pos}, Vel: {vel}, Waypoint: {waypoint}")
-        glast = self.gates[self.gate_idx - 1]
-        gpath = gate - glast
-        goffset = pos - gate
-        if np.dot(gpath, goffset) > 0:
-            self.gate_idx += 1
-            if logger is not None:
-                logger(f"[SARPlanner] Passed Gate, Pos: {pos}, Vel: {vel}, Gate: {gate}")
 
-            if self.gate_idx == len(self.gates):
-                self.gate_idx = 0
-            gate = self.gates[self.gate_idx]
+        upper_gain = 1
+        lower_gain = 1.1
 
-        """
-        rate, speed, alt = (
-            self.find_curve(
-                pos, vel, gate, logger=logger
-            )
-        )
-        """
-        """
-        heading = np.arctan2(vel[1], vel[0])
-        bearing = np.arctan2(gate.pos[1] - pos[1], gate.pos[0] - pos[0])
-        final = np.arctan2(gate.vec[1], gate.vec[0])
-        bhdiv = ang_diff(heading, bearing)
-        bfdiv = ang_diff(bearing, final)
-        divdiv = ang_diff(bhdiv, bfdiv)
-        target = bfdiv + bearing
-        if target > np.pi:
-            target -= 2 * np.pi
-
-        if target < -np.pi:
-            target += 2 * np.pi
-
-        distance = np.linalg.norm(pos - gate.pos)
-        control = ang_diff(target, heading)
-        if logger is not None:
-            pass#logger(f"Bearing: {round(bearing, 3)}, Heading: {round(heading, 3)}, Final: {round(final, 3)}, BHDiv: {round(bhdiv, 3)}, BFDiv: {round(bfdiv, 3)}, Target: {round(target, 3)}, Control: {round(control, 3)}, DivDiv: {round(divdiv, 3)}")
-        """
-        target = gate
+        target = waypoint
         heading = np.arctan2(vel[1], vel[0])
         bearing = np.arctan2(target[1] - pos[1], target[0] - pos[0])
         distance = np.linalg.norm(pos - target)
         speed = np.linalg.norm(vel)
 
-        control = 1.1 * speed * ang_diff(bearing, heading) / distance
+        control = np.clip(upper_gain * speed * ang_diff(bearing, heading) / distance**lower_gain, -3, 3)
+
+        if abs(control) > abs(self.rate):
+            self.rate = 0.95 * self.rate + 0.05 * control
+        else:
+            self.rate = control
 
         if logger is not None:
             pass#logger(f"Bearing: {round(bearing, 3)}, Heading: {round(heading, 3)}, Control: {round(control, 3)}")

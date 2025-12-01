@@ -92,7 +92,7 @@ class SARTracker:
                 "Elev Info: Alpha: %0.2f: AlphaDes: %0.2f; ABias: %0.2f CL: %0.2f, Def0: %0.2f, Slope: %0.2f, PID: %0.2f, Q:%0.2f"
                 % (a, a_hat, alt_bias, CL, de0, slope, pid, Q)
             )
-        return  de0 + pid / slope
+        return  np.clip(de0 + pid / slope, -1, 1)
 
     def compute_aileron(self, actual_data, ref_rate, logger=None):
         roll = actual_data['roll_est']
@@ -107,7 +107,7 @@ class SARTracker:
                 "Slope: %0.2f, PID: %0.2f, Roll: %0.2f, Target: %0.2f, Ref Rate: %0.2f"
                 % (slope, pid, roll, roll_hat, ref_rate)
             )
-        return pid / slope
+        return np.clip(pid / slope, -1, 1)
 
     def compute_throttle(self, actual_data, ref_vel, ref_alt, logger=None):
         alt_err = actual_data["z_est"] - ref_alt
@@ -130,7 +130,7 @@ class SARTracker:
         return np.clip(pid + dt0, 0, 1)
 
     def compute_rudder(self, aileron):
-        return -aileron * self.param.Cnda / self.param.Cndr
+        return np.clip(-aileron * self.param.Cnda / self.param.Cndr, -1, 1)
     
     def compute_control(self, rate, speed, alt, actual_data, logger=None):
         aileron = self.compute_aileron(actual_data, rate, logger=logger)
