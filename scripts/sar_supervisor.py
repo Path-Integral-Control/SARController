@@ -144,17 +144,18 @@ class PIDPublisher(Node):
         self.current_WP_ind = 0  # Starting WP index
         self.last_WP_ind = 1  # Last Waypoint Index, this gets overwritten later
 
-        self.waypoints, pylons = optimize("route", np.array([13, -5]), gain=20)
-
+        self.waypoints, pylons = optimize("route", np.array([13, -5]), np.array([-1, 0]), np.array([-5, 0]), np.array([-1.0, -0.2]), radius=3, gain=40)
+        self.start_index = 20
         pylons.append(pylons[0])
         alt = 7
-        ref_x_list = [point[0] for point in pylons]
-        ref_y_list = [point[1] for point in pylons]
-        ref_z_list = [alt for _ in pylons]
+        ref_x_list = [point[0] for point in pylons]# + [point[0] for point in self.waypoints]
+        ref_y_list = [point[1] for point in pylons]# + [point[1] for point in self.waypoints]
+        ref_z_list = [alt for _ in ref_x_list]
 
         self.planner = SARPlanner(
-            self.dt, self.waypoints, self.current_WP_ind, np.array([self.x, self.y, self.z])
+            self.dt, self.waypoints, self.start_index
         )
+
         self.planner.path_distance_buf = 5.0  # 2.0
         self.planner.wpt_switching_distance = 1.0  # 4.0
         self.planner.v_cruise = 10.0  # 0.5
@@ -379,7 +380,7 @@ class PIDPublisher(Node):
         self.get_logger().info(string)
 
     def pub_sports_cub(self):
-        self.last_WP_ind = np.shape(control_point)[0]  # determine last waypoint
+        self.last_WP_ind = len(self.waypoints)
 
         ######################################## FLIGHT MODE ####################################
         flight_mode_msg = String()
@@ -430,7 +431,7 @@ class PIDPublisher(Node):
             self.current_WP_ind = 0  # go back to cruise altitude waypoint
             self.end_cruise = False
             self.planner = SARPlanner(
-                self.dt, self.waypoints, self.current_WP_ind, np.array([self.x, self.y, self.z])
+                self.dt, self.waypoints, self.start_index
             )
 
             print(
@@ -443,7 +444,7 @@ class PIDPublisher(Node):
                 self.current_WP_ind = 0  # go back to cruise altitude waypoint
                 self.end_cruise = False
                 self.planner = SARPlanner(
-                    self.dt, self.waypoints, self.current_WP_ind, np.array([self.x, self.y, self.z])
+                    self.dt, self.waypoints, self.start_index
                 )
             else:
                 v_array = [self.vx_est, self.vy_est]

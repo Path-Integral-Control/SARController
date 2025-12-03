@@ -1,18 +1,8 @@
 import numpy as np
-from random import random
-
-######################
-# Waypoint Target Algorithm with cross-track flow field and Alongtrack switching modes
-######################
+import numpy.linalg as la
 
 
-def angle_rad_wrapper(angle):
-    return (angle + np.pi) % (2 * np.pi) - np.pi
-
-def proj(pos, point, vector):
-    poff = pos - point
-    return np.dot(poff, vector)
-
+# Difference between two angles
 def ang_diff(angle1, angle2):
     diff = angle1 - angle2
     if diff > np.pi:
@@ -23,46 +13,115 @@ def ang_diff(angle1, angle2):
 
 
 class SARPlanner:
-    def __init__(self, dt, waypoints, start, pos):
+    def __init__(self, dt, waypoints, start):
+        """
+        Parameters
+        ----------
+        dt - timestep
+        waypoints - waypoint list
+        start - index of first waypoint of real trajectory (disincluding lead-in trajectory)
+        """
         self.dt = dt
-        self.idx = start + 1
-        self.gate_idx = 1
+        self.start = start
+        self.idx = 1
         self.rate = 0
-        self.waypoints = [start] + [np.array(pt[0:2]) for pt in waypoints]
+        self.waypoints = [np.array(pt[0:2]) for pt in waypoints]
+        self.starting = True
+
+
+    # Copy-pasted from optimizer.py
+    def relative(self, u):
+        if u >= len(self.waypoints):
+            return u - len(self.waypoints) + 1
+        if u < 0:
+            return u + len(self.waypoints) - 1
+        return u
+
+
+    # Copy-pasted from optimizer.py
+    def presumed(self, y):
+        ingress = self.waypoints[y] - self.waypoints[self.relative(y - 1)]
+        egress = self.waypoints[self.relative(y + 1)] - self.waypoints[y]
+        vec = la.norm(egress) * ingress / la.norm(ingress) + la.norm(ingress) * egress / la.norm(egress)
+        return vec / la.norm(vec)
 
 
     def plan(self, pos, vel, logger=None):
+        """
+        Find turn rate, airspeed, and altitude from position and velocity
+
+        Parameters
+        ----------
+        pos - current position
+        vel - current velocity
+        logger - logger callback
+
+        Returns
+        -------
+        Turn rate
+        Airspeed
+        Altitude
+        """
+
+        # Fetch current waypoint
         waypoint = self.waypoints[self.idx]
+
+        # Determine whether waypoint has been passed w/ vector projection
         wlast = self.waypoints[self.idx - 1]
         wpath = waypoint - wlast
         woffset = pos - waypoint
-        logger(f"[SARPlanner] Finding Waypoint, Pos: {pos}, Vel: {vel}, Waypoint: {waypoint}")
-        if np.dot(wpath, woffset) > 0:
+
+        # Loop to skip multiple waypoints at once if necessary
+        while np.dot(wpath, woffset) > 0:
             self.idx += 1
+            if self.idx == len(self.waypoints):
+                self.idx = self.start
+
+            # Reset waypoint data
+            waypoint = self.waypoints[self.idx]
+            wlast = self.waypoints[self.idx - 1]
+            wpath = waypoint - wlast
+            woffset = pos - waypoint
+
             if logger is not None:
                 logger(f"[SARPlanner] Passed Waypoint, Pos: {pos}, Vel: {vel}, Waypoint: {waypoint}")
 
-        upper_gain = 1
-        lower_gain = 1.1
+        # Find cross-track error
+        path = wpath
+        offset = pos - wlast
+        projection = path * np.dot(path, offset) / la.norm(path)**2
+        reject = offset - projection
+        cross = la.norm(reject) * -np.sign(reject[0] * path[1] - path[0] * reject[1])
 
-        target = waypoint
+        # Find heading error
+        pangle = np.arctan2(path[1], path[0])
         heading = np.arctan2(vel[1], vel[0])
-        bearing = np.arctan2(target[1] - pos[1], target[0] - pos[0])
-        distance = np.linalg.norm(pos - target)
-        speed = np.linalg.norm(vel)
+        theta = ang_diff(heading, pangle)
 
-        control = np.clip(upper_gain * speed * ang_diff(bearing, heading) / distance**lower_gain, -3, 3)
+        # Fetch next waypoint
+        wnext = self.waypoints[self.idx + 1] if self.idx + 1 < len(self.waypoints) else waypoint * 2 - wlast
+        npath = wnext - waypoint
 
-        if abs(control) > abs(self.rate):
-            self.rate = 0.95 * self.rate + 0.05 * control
-        else:
-            self.rate = control
+        # Find distance of current turn
+        dist = (la.norm(npath) + la.norm(path)) / 2
 
-        if logger is not None:
-            pass#logger(f"Bearing: {round(bearing, 3)}, Heading: {round(heading, 3)}, Control: {round(control, 3)}")
+        # Find default turn rate from current and next control segments
+        inangle = np.arctan2(path[1], path[0])
+        outangle = np.arctan2(npath[1], npath[0])
+        delta = ang_diff(outangle, inangle)
+        default = la.norm(vel) * delta / dist
 
+        # PID control for cross-track error using idea that derivtive of cross-track is sin(theta)
+        p = 0.02
+        d = 2.3
+
+        # Control is default control plus PID adjustment
+        control = -p * cross + -d * np.sin(theta) + default
+
+        # TODO: add actual airspeed control if necessary
         return np.clip(control, -3, 3), 20, 7.5
 
 
+    # Get current waypoint index
     def get_index(self):
         return self.idx

@@ -3,7 +3,6 @@ import yaml
 from pathlib import Path
 from types import SimpleNamespace
 
-
 """
 This module performs Total Energy control designed for Sport Cub trajectory tracking.
 """
@@ -14,6 +13,8 @@ def _wrap_pi(a):
 def _safe_div(x, y, eps=1e-6):
     return x / (y if abs(y) > eps else np.sign(y)*eps if y != 0.0 else eps)
 
+
+# PID controllers are easier to rewrite than find a package for
 class PIDController:
     def __init__(self, integral_bound, p, i, d, dt):
         self.integral_bound = integral_bound
@@ -76,15 +77,22 @@ class SARTracker:
         a = actual_data["a_est"]
         Q = actual_data["q_est"]
         alt_err = actual_data["z_est"] - ref_alt
+
+        # Calculate alpha bias to correct altitude error
         alt_tol = 3
         alt_gain = 1
         alt_bias = -np.clip(alt_err / alt_tol, -1, 1)
+
+        # Calculate required alpha to maintain level flight
         q = 0.5 * self.param.rho * V * V
         L = self.weight / np.cos(roll)
         CL = L / (self.param.S * q)
         a_hat = (CL - self.param.CL0) / self.param.CLa + alt_bias * alt_gain
 
+        # Required elevator to maintain current alpha
         de0 = (self.param.Cm0 + a * self.param.Cma + Q * self.param.Cmq) / -self.param.Cmde
+
+        # Normalize PID control to remove airspeed dependency
         slope = q * self.param.S * self.param.cbar * self.param.Cmde / self.param.Jy
         pid = self.elev_pid.compute(a - a_hat)
         if logger is not None:
@@ -98,7 +106,11 @@ class SARTracker:
         roll = actual_data['roll_est']
         V = actual_data['v_est']
         P = actual_data['p_est']
+
+        # Required roll angle to generate requested turn rate
         roll_hat = -np.atan(ref_rate * V / self.g)
+
+        # Normalize PID control to remove airspeed dependency
         slope = self.param.S * self.param.span * 0.5 * self.param.rho * V * V / self.param.Jx
         pid = self.ail_pid.compute(roll - roll_hat)
         #da0 = -P * self.param.Clp / self.param.Clda
@@ -113,13 +125,21 @@ class SARTracker:
         alt_err = actual_data["z_est"] - ref_alt
         alt_tol = 3
         alt_gain = 2
+
+        # Alltitide bias again
         alt_bias = alt_gain * -np.clip(alt_err / alt_tol, -1, 1)
         V = actual_data['v_est']
+
+        # Calculate current drag assuming level flight
         q = 0.5 * self.param.rho * V * V
         L = self.weight / np.cos(actual_data['roll_est'])
         CL = L / (self.param.S * q)
         CD = self.param.CD0 + self.param.CDCLS * CL * CL
+
+        # Throttle setting required to maintain airspeed
         dt0 = q * self.param.S * CD / self.param.T_max
+
+        # Linearize PID control
         slope = self.param.T_max / self.mass
         pid = self.pow_pid.compute(V - alt_bias - ref_vel)
         if logger is not None:
@@ -130,6 +150,8 @@ class SARTracker:
         return np.clip(pid + dt0, 0, 1)
 
     def compute_rudder(self, aileron):
+
+        # Calculate rudder deterministically to offset aileron inputs
         return np.clip(-aileron * self.param.Cnda / self.param.Cndr, -1, 1)
     
     def compute_control(self, rate, speed, alt, actual_data, logger=None):
