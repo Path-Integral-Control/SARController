@@ -32,6 +32,7 @@ def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pv
     gates = [[pylons[gate['p1']], pylons[gate['p2']]] for gate in route['gates']]
     gates.append(gates[0])
 
+
     # Calculate the difference between two angles
     def ang_diff(angle1, angle2):
         diff = angle1 - angle2
