@@ -77,6 +77,9 @@ class SARPlanner:
             if self.idx == len(self.waypoints):
                 self.idx = self.start
 
+            if self.idx > self.start:
+                self.starting = False
+
             # Reset waypoint data
             waypoint = self.waypoints[self.idx]
             wlast = self.waypoints[self.idx - 1]
@@ -112,8 +115,15 @@ class SARPlanner:
         default = la.norm(vel) * delta / dist
 
         # PID control for cross-track error using idea that derivtive of cross-track is sin(theta)
-        p = 0.02
+        p = 0.012
         d = 2.3
+
+        if self.starting:
+            default = 0
+            p = 0.1
+            d = 3
+
+
 
         # Control is default control plus PID adjustment
         control = -p * cross + -d * np.sin(theta) + default

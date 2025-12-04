@@ -224,6 +224,33 @@ def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pv
 
         return pts
 
+    def leadin(pos, vel, target, tvel, gate, speed, curve):
+        sangle = np.arctan2(vel[1], vel[0])
+        tangle = np.arctan2(tvel[1], tvel[0])
+        arc = ang_diff(sangle, tangle)
+        pylon = gate[1]
+        flag = target - pylon
+        dir = np.sign(arc)
+        angle = tangle + dir * np.pi / 2
+        radius = speed / curve
+        center = target - np.array([np.cos(angle), np.sin(angle)]) * radius
+        arcin = []
+        print(angle)
+        while True:
+            angle += dir * np.pi / 18
+            pt = np.array([np.cos(angle), np.sin(angle)]) * radius + center
+            arcin.append(pt)
+            if np.dot(pt - pylon, flag) < 0:
+                break
+
+        velo = angle - dir * np.pi / 2
+
+        inbound = find_intermediates(pos, vel, arcin[-1], np.array([np.cos(velo), np.sin(velo)]))
+
+        return inbound + list(reversed(arcin))
+
+
+
     # Stochastic gradient descent to improve reference trajectory, initialized at min-radius turns
     step = 0.1
     for _ in range(1000):
@@ -244,11 +271,12 @@ def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pv
     partv = pvec
     partv = partv / la.norm(partv)
 
-    points = find_intermediates(start, svec, partp, partv)
-    points += find_intermediates(partp, partv, calc(0), presumed(0))
+    points = []#leadin(start, svec, calc(0), presumed(0), gates[0], 12, 1.5)
+    #points = find_intermediates(start, svec, partp, partv)
+    #points += find_intermediates(partp, partv, calc(0), presumed(0))
 
     # Add intermediate points between each primary waypoint
-    for i in range(1, len(flags)):
+    for i in range(len(flags)):
         curr = calc(i)
         fore = calc(relative(i - 1))
         cv = presumed(i)
@@ -256,4 +284,4 @@ def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pv
         points += find_intermediates(fore, fv, curr, cv)
 
     # Return both the waypoints and the original pylons
-    return points, pylons
+    return points, pylons, 10
