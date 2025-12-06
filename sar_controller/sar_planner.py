@@ -129,9 +129,20 @@ class SARPlanner:
         control = -p * cross + -d * np.sin(theta) + default
 
         # TODO: add actual airspeed control if necessary
-        return np.clip(control, -3, 3), 20, 7.5
+        return np.clip(control, -3, 3), 20, 7.0
 
 
     # Get current waypoint index
     def get_index(self):
         return self.idx
+
+    # Set waypoints (for perturbed trajectory generation in MPPI)
+    def set_waypoints(self, waypoints):
+        """
+        Update the internal waypoints list.
+        
+        Parameters
+        ----------
+        waypoints - new waypoint list [(x, y, z), ...]
+        """
+        self.waypoints = [np.array(pt[0:2]) for pt in waypoints]
