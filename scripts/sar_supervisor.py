@@ -144,12 +144,11 @@ class PIDPublisher(Node):
         self.current_WP_ind = 0  # Starting WP index
         self.last_WP_ind = 1  # Last Waypoint Index, this gets overwritten later
 
-        self.waypoints, pylons, self.start_index = optimize("route", np.array([13, -5]), np.array([-1, 0]), np.array([-5, 0]), np.array([-1.0, -0.2]),
-                                                            radius=3, gain=30)
+        self.waypoints, pylons, self.start_index = optimize("route", np.array([-100, -100]), radius=2, gain=50)
         pylons.append(pylons[0])
         alt = 7
-        ref_x_list = [point[0] for point in pylons]# + [point[0] for point in self.waypoints]
-        ref_y_list = [point[1] for point in pylons]# + [point[1] for point in self.waypoints]
+        ref_x_list = [point[0] for point in pylons] + [point[0] for point in self.waypoints]
+        ref_y_list = [point[1] for point in pylons] + [point[1] for point in self.waypoints]
         ref_z_list = [alt for _ in ref_x_list]
 
         self.planner = SARPlanner(

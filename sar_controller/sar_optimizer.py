@@ -4,7 +4,7 @@ import yaml
 import numpy as np
 import numpy.linalg as la
 
-def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pvec: np.ndarray, radius=1, gain=60):
+def optimize(filename, start: np.ndarray, radius=1, gain=60):
     """
     Builds an optimized reference trajectory from a route description file
 
@@ -149,7 +149,13 @@ def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pv
         of total curvature assuming no overshoots. Will be off by a roughly constant factor from true value, but
         constant is simply absorbed into the curvature gain.
         """
-        total = difffore / rej + diffaft / rej + difffore / pro + diffaft / pro
+        if rej < pro:
+            total = difffore / rej + diffaft / rej
+        else:
+            total = difffore / pro + diffaft / pro
+
+        if total > 0.35:
+            total *= 3
 
         # Apply a penalty for close pylon approaches
         radius_gain = 0
@@ -176,7 +182,6 @@ def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pv
         -------
         List of intermediate waypoints
         """
-
         # Direction angles at both primaries
         fa = np.arctan2(forev[1], forev[0])
         ca = np.arctan2(vel[1], vel[0])
@@ -193,7 +198,7 @@ def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pv
 
         # If turn circle is infinite (straight line segment), just return evenly spaced points
         if np.dot(finv, cinv) / (la.norm(cinv) * la.norm(finv)) == 1:
-            return [pt for pt in np.linspace(forep, pos, 10, endpoint=False)]
+            return np.linspace(forep, pos, 10)
 
         """
         Calculate seperate circles for both points to interpolate between.
@@ -201,53 +206,63 @@ def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pv
         """
         rej_b = finv - cinv * np.dot(finv, cinv) / la.norm(cinv)
         err_b = pos - forep
-        rad_b = np.dot(err_b, rej_b) / la.norm(rej_b) ** 2
-        center_b = rad_b * cinv + pos
+        rad_b = np.dot(err_b, rej_b) / la.norm(rej_b)  # **2
+        vec_b = rad_b * cinv
+        center_b = vec_b + pos
 
         rej_f = cinv - finv * np.dot(finv, cinv) / la.norm(finv)
         err_f = forep - pos
-        rad_f = np.dot(err_f, rej_f) / la.norm(rej_f) ** 2
-        center_f = rad_f * finv + forep
+        rad_f = np.dot(err_f, rej_f) / la.norm(rej_f)  # ** 2
+        vec_f = rad_f * finv
+        center_f = vec_f + forep
 
-        # Place points along interpolated turn ellipse
+        bottom = np.concatenate([np.reshape(vec_f, (2, 1)), -np.reshape(vec_b, (2, 1))], axis=1)
+        top = np.concatenate([np.reshape(err_b, (2, 1)), -np.reshape(vec_b, (2, 1))], axis=1)
+        center = vec_f * la.det(top) / la.det(bottom) + forep
+
+        prime = None
+        subp = None
+        focii = None
+        major = None
+        length = None
+        dangle = None
+        oangle = None
+        if rad_f < rad_b:
+            focii = [center_f, 2 * (center - forep) - vec_f + forep]
+            prime = center_f
+            subp = la.norm(center - pos)
+            major = la.norm(center - forep)
+            length = la.norm(center - center_f)
+            dangle = fina
+            oangle = cina
+        else:
+            focii = [center_b, 2 * (center - pos) - vec_b + pos]
+            prime = center_b
+            subp = la.norm(center - forep)
+            major = la.norm(center - pos)
+            length = la.norm(center - center_b)
+            dangle = cina
+            oangle = fina
+
+        semi = np.sqrt(major ** 2 - length ** 2)
+        ecc = length / major
+
         pts = []
         granules = 10
+
+        main = center - prime
+        cross = np.array([-main[1], main[0]])
+        evecs = np.concatenate([np.reshape(main, (2, 1)), np.reshape(cross, (2, 1))], axis=1)
+        oppr = subp / (semi / np.sqrt(1 - (ecc * np.cos(oangle - dangle)) ** 2))
+        trans = np.dot(np.dot(evecs, np.diagflat([1, oppr])), la.inv(evecs))
+
         for i in range(granules):
-
-            # Evenly angularly-spaced points
-            theta = fina + i * darc / granules
-            vec = np.array([np.cos(theta), np.sin(theta)])
-
-            # Linearly interpolate between the two turn circles
             ratio = i / granules
-            pts.append(ratio * (center_b - rad_b * vec) + (1 - ratio) * (center_f - rad_f * vec))
-
+            theta = fina + ratio * darc + np.pi
+            vec = np.array([np.cos(theta), np.sin(theta)])
+            rad = semi / np.sqrt(1 - (ecc * np.cos(theta - dangle)) ** 2)
+            pts.append(np.dot(trans, rad * vec) + center)
         return pts
-
-    def leadin(pos, vel, target, tvel, gate, speed, curve):
-        sangle = np.arctan2(vel[1], vel[0])
-        tangle = np.arctan2(tvel[1], tvel[0])
-        arc = ang_diff(sangle, tangle)
-        pylon = gate[1]
-        flag = target - pylon
-        dir = np.sign(arc)
-        angle = tangle + dir * np.pi / 2
-        radius = speed / curve
-        center = target - np.array([np.cos(angle), np.sin(angle)]) * radius
-        arcin = []
-        print(angle)
-        while True:
-            angle += dir * np.pi / 18
-            pt = np.array([np.cos(angle), np.sin(angle)]) * radius + center
-            arcin.append(pt)
-            if np.dot(pt - pylon, flag) < 0:
-                break
-
-        velo = angle - dir * np.pi / 2
-
-        inbound = find_intermediates(pos, vel, arcin[-1], np.array([np.cos(velo), np.sin(velo)]))
-
-        return inbound + list(reversed(arcin))
 
 
 
@@ -266,14 +281,7 @@ def optimize(filename, start: np.ndarray, svec: np.ndarray, ppos: np.ndarray, pv
             else:
                 weights[i] += step
 
-    # Manually add lead in path to course start from start to staging point to first primary waypoint
-    partp = ppos
-    partv = pvec
-    partv = partv / la.norm(partv)
-
-    points = []#leadin(start, svec, calc(0), presumed(0), gates[0], 12, 1.5)
-    #points = find_intermediates(start, svec, partp, partv)
-    #points += find_intermediates(partp, partv, calc(0), presumed(0))
+    points = []
 
     # Add intermediate points between each primary waypoint
     for i in range(len(flags)):

@@ -115,21 +115,19 @@ class SARPlanner:
         default = la.norm(vel) * delta / dist
 
         # PID control for cross-track error using idea that derivtive of cross-track is sin(theta)
-        p = 0.012
-        d = 2.3
+        #p = 0.008
+        #d = 2.3
 
-        if self.starting:
-            default = 0
-            p = 0.1
-            d = 3
-
-
+        p = 0.005
+        d = 1.1
 
         # Control is default control plus PID adjustment
-        control = -p * cross + -d * np.sin(theta) + default
+        control = np.clip(-p * cross + -d * np.sin(theta) + default, -3, 3)
+
+
 
         # TODO: add actual airspeed control if necessary
-        return np.clip(control, -3, 3), 20, 7.5
+        return control, 30 * abs(dist / delta) + 5, 7.5
 
 
     # Get current waypoint index
