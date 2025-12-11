@@ -13,7 +13,7 @@ def ang_diff(angle1, angle2):
 
 
 class SARPlanner:
-    def __init__(self, dt, waypoints, start):
+    def __init__(self, dt, waypoints, start, tolerance=20, alt=7.5):
         """
         Parameters
         ----------
@@ -27,23 +27,56 @@ class SARPlanner:
         self.rate = 0
         self.waypoints = [np.array(pt[0:2]) for pt in waypoints]
         self.starting = True
+        self.failed = False
+        self.tolerance = tolerance
+        self.alt = alt
+        self.integral = 0
 
 
-    # Copy-pasted from optimizer.py
-    def relative(self, u):
-        if u >= len(self.waypoints):
-            return u - len(self.waypoints) + 1
-        if u < 0:
-            return u + len(self.waypoints) - 1
-        return u
+    def failsafe(self, pos, vel, logger=None):
+        current = self.waypoints[self.idx]
+        last = self.waypoints[self.idx - 1]
+        path = current - last
+        offset = pos - current
+
+        if np.dot(path, offset) > 0:
+            self.failed = False
+            return self.plan(pos, vel, logger)
+
+        target = np.arctan2(path[1], path[0])
+        heading = np.arctan2(vel[1], vel[0])
+        bearing = np.arctan2(offset[1], offset[0])
+        btdiv = ang_diff(bearing, target)
+        ideal = 2 * btdiv + target
+        if ideal > np.pi:
+            ideal = -2 * np.pi + ideal
+        elif ideal < -np.pi:
+            ideal = 2 * np.pi + ideal
+
+        control = ang_diff(ideal, heading)
+
+        return control, 10, self.alt
+
+        proj = path * np.dot(path, offset) / la.norm(path)**2
+        rej = la.norm(offset - proj)
 
 
-    # Copy-pasted from optimizer.py
-    def presumed(self, y):
-        ingress = self.waypoints[y] - self.waypoints[self.relative(y - 1)]
-        egress = self.waypoints[self.relative(y + 1)] - self.waypoints[y]
-        vec = la.norm(egress) * ingress / la.norm(ingress) + la.norm(ingress) * egress / la.norm(egress)
-        return vec / la.norm(vec)
+
+
+
+    def fail(self, pos, vel, logger=None):
+        best = self.idx
+        dist = 0
+        for i in range(len(self.waypoints)):
+            attempt = la.norm(self.waypoints[i] - pos)
+            if attempt > dist:
+                dist = attempt
+                best = i
+
+        self.idx = best
+        self.failed = True
+        if logger is not None:
+            logger(f"Failed: New Waypoint {self.waypoints[self.idx]}, Dir {self.waypoints[self.idx] - self.waypoints[self.idx - 1]}, Pos: {pos}")
 
 
     def plan(self, pos, vel, logger=None):
@@ -62,6 +95,10 @@ class SARPlanner:
         Airspeed
         Altitude
         """
+
+        # Activate failsafe controller if necessary
+        if self.failed:
+            return self.failsafe(pos, vel, logger)
 
         # Fetch current waypoint
         waypoint = self.waypoints[self.idx]
@@ -101,6 +138,10 @@ class SARPlanner:
         heading = np.arctan2(vel[1], vel[0])
         theta = ang_diff(heading, pangle)
 
+        # Activate failsafe mode if necessary
+        safety = abs(cross) + abs(theta) * 10
+
+
         # Fetch next waypoint
         wnext = self.waypoints[self.idx + 1] if self.idx + 1 < len(self.waypoints) else waypoint * 2 - wlast
         npath = wnext - waypoint
@@ -114,20 +155,17 @@ class SARPlanner:
         delta = ang_diff(outangle, inangle)
         default = la.norm(vel) * delta / dist
 
-        # PID control for cross-track error using idea that derivtive of cross-track is sin(theta)
-        #p = 0.008
-        #d = 2.3
-
-        p = 0.005
+        if safety > self.tolerance:
+            self.fail(pos, vel, logger)
+            return self.failsafe(pos, vel, logger)
+        p = 0.05
         d = 1.1
 
         # Control is default control plus PID adjustment
-        control = np.clip(-p * cross + -d * np.sin(theta) + default, -3, 3)
+        control = np.clip(-p * cross + -d * np.sin(theta) + default, -2, 2)
 
-
-
-        # TODO: add actual airspeed control if necessary
-        return control, 30 * abs(dist / delta) + 5, 7.5
+        # Simple deterministic airspeed control from turn radius
+        return control, 0.4 * abs(dist / delta) + 6, self.alt
 
 
     # Get current waypoint index

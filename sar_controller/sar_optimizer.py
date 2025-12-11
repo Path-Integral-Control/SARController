@@ -4,7 +4,7 @@ import yaml
 import numpy as np
 import numpy.linalg as la
 
-def optimize(filename, start: np.ndarray, radius=1, gain=60):
+def optimize(filename, start: np.ndarray, radius=1, gain=60, offset=np.array([0, 0])):
     """
     Builds an optimized reference trajectory from a route description file
 
@@ -28,7 +28,7 @@ def optimize(filename, start: np.ndarray, radius=1, gain=60):
     this_file = Path(__file__).resolve()
     file = this_file.parent / "param" / f"{filename}.yaml"
     route = yaml.load(open(file), Loader=yaml.FullLoader)
-    pylons = [np.array([pylon['x'], pylon['y']]) for pylon in route['pylons']]
+    pylons = [np.array([pylon['x'], pylon['y']]) + offset for pylon in route['pylons']]
     gates = [[pylons[gate['p1']], pylons[gate['p2']]] for gate in route['gates']]
     gates.append(gates[0])
 

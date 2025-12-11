@@ -144,7 +144,8 @@ class PIDPublisher(Node):
         self.current_WP_ind = 0  # Starting WP index
         self.last_WP_ind = 1  # Last Waypoint Index, this gets overwritten later
 
-        self.waypoints, pylons, self.start_index = optimize("route", np.array([-100, -100]), radius=2, gain=50)
+        self.waypoints, pylons, self.start_index = optimize("route", np.array([-100, -100]), radius=1, gain=40, offset=
+                                                            np.array([0, 0]))
         pylons.append(pylons[0])
         alt = 7
         ref_x_list = [point[0] for point in pylons] + [point[0] for point in self.waypoints]
@@ -154,6 +155,11 @@ class PIDPublisher(Node):
         self.planner = SARPlanner(
             self.dt, self.waypoints, self.start_index
         )
+
+        self.anoise = 0
+        self.tnoise = 0
+        self.enoise = 0
+        self.rnoise = 0
 
         self.planner.path_distance_buf = 5.0  # 2.0
         self.planner.wpt_switching_distance = 1.0  # 4.0
@@ -461,6 +467,22 @@ class PIDPublisher(Node):
                         rate, speed, alti, self.actual_data#, logger=self.logger_callback
                     )
                 )
+                #self.aileron += self.anoise * 2
+                #self.elev += self.enoise * 2
+                #self.throttle += self.tnoise * 2
+                #self.rudder += self.rnoise * 2
+
+                def inc(n, upper, lower, noise):
+                    r = (np.random.random() * 2 - 1) * dt * noise
+                    return (r + n) * 0.99
+
+
+                self.anoise = inc(self.anoise, 0.1, -0.1, 1)
+                self.enoise = inc(self.enoise, 0.1, -0.1, 1)
+                self.tnoise = inc(self.tnoise, 0.1, -0.1, 1)
+                self.rnoise = inc(self.rnoise, 0.1, -0.1, 1)
+                self.get_logger().info(f"{self.anoise}, {self.enoise}, {self.tnoise}, {self.rnoise}")
+
                 # self.current_WP_ind = self.wpt_planner.check_arrived(self.x_est, self.y_est, self.z_est)
                 self.current_WP_ind = self.planner.get_index()
 
