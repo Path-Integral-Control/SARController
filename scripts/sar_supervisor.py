@@ -144,7 +144,7 @@ class PIDPublisher(Node):
         self.current_WP_ind = 0  # Starting WP index
         self.last_WP_ind = 1  # Last Waypoint Index, this gets overwritten later
 
-        self.waypoints, pylons, self.start_index = optimize("route", np.array([-100, -100]), radius=1, gain=40, offset=
+        self.waypoints, pylons, self.start_index = optimize("route", np.array([-100, -100]), radius=3, gain=40, offset=
                                                             np.array([0, 0]))
         pylons.append(pylons[0])
         alt = 7

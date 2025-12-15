@@ -3,6 +3,8 @@ from pathlib import Path
 import yaml
 import numpy as np
 import numpy.linalg as la
+from scipy.interpolate import make_interp_spline
+
 
 def optimize(filename, start: np.ndarray, radius=1, gain=60, offset=np.array([0, 0])):
     """
@@ -167,104 +169,6 @@ def optimize(filename, start: np.ndarray, radius=1, gain=60, offset=np.array([0,
         # Penalize distance linearly and curvature quadratically (curvature reduces maximum speed roughly quadratically)
         return distance + gain * total ** 2 + radius_gain / w
 
-    def find_intermediates(forep, forev, pos, vel):
-        """
-        Find intermediate waypoints between two primary waypoints
-
-        Parameters
-        ----------
-        forep - position at first waypoint
-        forev - direction at first waypoint
-        pos - position at second waypoint
-        vel - direction at second waypoint
-
-        Returns
-        -------
-        List of intermediate waypoints
-        """
-        # Direction angles at both primaries
-        fa = np.arctan2(forev[1], forev[0])
-        ca = np.arctan2(vel[1], vel[0])
-
-        # Angular dfference between directions
-        darc = ang_diff(ca, fa)
-
-        # Calculate vectors pointing towards turn circle center from both points
-        off = np.sign(darc) * np.pi / 2
-        fina = off + fa
-        cina = off + ca
-        finv = np.array([np.cos(fina), np.sin(fina)])
-        cinv = np.array([np.cos(cina), np.sin(cina)])
-
-        # If turn circle is infinite (straight line segment), just return evenly spaced points
-        if np.dot(finv, cinv) / (la.norm(cinv) * la.norm(finv)) == 1:
-            return np.linspace(forep, pos, 10)
-
-        """
-        Calculate seperate circles for both points to interpolate between.
-        Uses vector projection to calculate circle radius, then uses radius to find center.
-        """
-        rej_b = finv - cinv * np.dot(finv, cinv) / la.norm(cinv)
-        err_b = pos - forep
-        rad_b = np.dot(err_b, rej_b) / la.norm(rej_b)  # **2
-        vec_b = rad_b * cinv
-        center_b = vec_b + pos
-
-        rej_f = cinv - finv * np.dot(finv, cinv) / la.norm(finv)
-        err_f = forep - pos
-        rad_f = np.dot(err_f, rej_f) / la.norm(rej_f)  # ** 2
-        vec_f = rad_f * finv
-        center_f = vec_f + forep
-
-        bottom = np.concatenate([np.reshape(vec_f, (2, 1)), -np.reshape(vec_b, (2, 1))], axis=1)
-        top = np.concatenate([np.reshape(err_b, (2, 1)), -np.reshape(vec_b, (2, 1))], axis=1)
-        center = vec_f * la.det(top) / la.det(bottom) + forep
-
-        prime = None
-        subp = None
-        focii = None
-        major = None
-        length = None
-        dangle = None
-        oangle = None
-        if rad_f < rad_b:
-            focii = [center_f, 2 * (center - forep) - vec_f + forep]
-            prime = center_f
-            subp = la.norm(center - pos)
-            major = la.norm(center - forep)
-            length = la.norm(center - center_f)
-            dangle = fina
-            oangle = cina
-        else:
-            focii = [center_b, 2 * (center - pos) - vec_b + pos]
-            prime = center_b
-            subp = la.norm(center - forep)
-            major = la.norm(center - pos)
-            length = la.norm(center - center_b)
-            dangle = cina
-            oangle = fina
-
-        semi = np.sqrt(major ** 2 - length ** 2)
-        ecc = length / major
-
-        pts = []
-        granules = 10
-
-        main = center - prime
-        cross = np.array([-main[1], main[0]])
-        evecs = np.concatenate([np.reshape(main, (2, 1)), np.reshape(cross, (2, 1))], axis=1)
-        oppr = subp / (semi / np.sqrt(1 - (ecc * np.cos(oangle - dangle)) ** 2))
-        trans = np.dot(np.dot(evecs, np.diagflat([1, oppr])), la.inv(evecs))
-
-        for i in range(granules):
-            ratio = i / granules
-            theta = fina + ratio * darc + np.pi
-            vec = np.array([np.cos(theta), np.sin(theta)])
-            rad = semi / np.sqrt(1 - (ecc * np.cos(theta - dangle)) ** 2)
-            pts.append(np.dot(trans, rad * vec) + center)
-        return pts
-
-
 
     # Stochastic gradient descent to improve reference trajectory, initialized at min-radius turns
     step = 0.1
@@ -281,15 +185,18 @@ def optimize(filename, start: np.ndarray, radius=1, gain=60, offset=np.array([0,
             else:
                 weights[i] += step
 
-    points = []
+    pts_list = [gates[i][1] + flags[i] * weights[i] for i in list(range(1, len(flags)))]
+    pts_list.append(pts_list[0])
+    pts = np.array(pts_list).transpose()
+    dp = pts[:, 1:] - pts[:, :-1]
+    l = (dp ** 2).sum(axis=0)
+    u_cord = np.sqrt(l).cumsum()
+    u_cord = np.r_[0, u_cord]
 
-    # Add intermediate points between each primary waypoint
-    for i in range(len(flags)):
-        curr = calc(i)
-        fore = calc(relative(i - 1))
-        cv = presumed(i)
-        fv = presumed(relative(i - 1))
-        points += find_intermediates(fore, fv, curr, cv)
+    spl = make_interp_spline(u_cord, pts, axis=1, bc_type="periodic", k=3)  # note p is a 2D array
+    uu = np.linspace(u_cord[0], u_cord[-1], 51)
+    xx, yy = spl(uu)
+    waypoints = list(np.stack([xx, yy]).transpose())
 
     # Return both the waypoints and the original pylons
-    return points, pylons, 10
+    return waypoints, pylons, 10

@@ -139,7 +139,7 @@ class SARPlanner:
         theta = ang_diff(heading, pangle)
 
         # Activate failsafe mode if necessary
-        safety = abs(cross) + abs(theta) * 10
+        safety = abs(cross) + abs(theta) * 5
 
 
         # Fetch next waypoint
