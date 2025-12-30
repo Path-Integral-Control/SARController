@@ -4,7 +4,7 @@
     <node pkg="cyecca" exec="fixedwing_sim.py" output="screen"/>
     <node pkg="sar_controller" exec="sar_supervisor.py" output="screen"/>
     <!--<node pkg="joy" exec="joy_node"/>-->
-    <node pkg="rviz2" exec="rviz2" args="-d $(find-pkg-prefix auav_pylon_2026)/share/auav_pylon_2026/config/cub_sim.config.rviz">
+    <node pkg="rviz2" exec="rviz2" args="-d $(find-pkg-prefix sar_controller)/share/sar_controller/config/cub_sim.config.rviz">
         <param name="use_sim_time" value="true"/>
     </node>
     <include file="$(find-pkg-prefix cub_description)/share/cub_description/launch/robot_description.launch.py"/>
