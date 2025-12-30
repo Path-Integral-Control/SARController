@@ -53,9 +53,9 @@ class SARTracker:
         self.reload_gains()
 
     def reload_gains(self):
-        print(f"[SARControl] Using gain path: {self.base_dir / f"{self.args}.yaml"}")
-
         gain_path = self.base_dir / f"{self.args}.yaml"
+
+        print(f"[SARControl] Using gain path: {gain_path}")
 
         if not gain_path.exists():
             raise FileNotFoundError(f"[SARControl] Gain file not found: {gain_path}")
