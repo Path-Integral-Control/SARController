@@ -79,7 +79,7 @@ class SARPlanner:
             logger(f"Failed: New Waypoint {self.waypoints[self.idx]}, Dir {self.waypoints[self.idx] - self.waypoints[self.idx - 1]}, Pos: {pos}")
 
 
-    def plan(self, pos, vel, logger=None):
+    def plan(self, pos, vel, logger=None, p=None, d=None):
         """
         Find turn rate, airspeed, and altitude from position and velocity
 
@@ -158,8 +158,10 @@ class SARPlanner:
         if safety > self.tolerance:
             self.fail(pos, vel, logger)
             return self.failsafe(pos, vel, logger)
-        p = 0.05
-        d = 1.1
+        if p is None:
+            p = 0.05
+        if d is None:
+            d = 1.1
 
         # Control is default control plus PID adjustment
         control = np.clip(-p * cross + -d * np.sin(theta) + default, -2, 2)

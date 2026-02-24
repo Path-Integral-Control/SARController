@@ -1,8 +1,25 @@
 <launch>
     <arg name="use_joystick" default="false"/>
+    <arg name="use_hyp_control_output" default="true"/>
+    <arg name="pid_main_p" default="0.05"/>
+    <arg name="pid_main_d" default="1.1"/>
+    <!-- <arg name="pid_hyp_p" default="0.02"/>
+    <arg name="pid_hyp_d" default="1.4"/> -->
+
+    <arg name="pid_hyp_p" default="0.075"/>
+    <arg name="pid_hyp_d" default="1.3"/>
+
+    <!-- <arg name="pid_hyp_p" default="0.03"/>
+    <arg name="pid_hyp_d" default="0.8"/> -->
 
     <node pkg="cyecca" exec="fixedwing_sim.py" output="screen"/>
-    <node pkg="sar_controller" exec="sar_supervisor.py" output="screen"/>
+    <node pkg="sar_controller" exec="sar_supervisor.py" output="screen">
+        <param name="use_hyp_control_output" value="$(var use_hyp_control_output)"/>
+        <param name="pid_main_p" value="$(var pid_main_p)"/>
+        <param name="pid_main_d" value="$(var pid_main_d)"/>
+        <param name="pid_hyp_p" value="$(var pid_hyp_p)"/>
+        <param name="pid_hyp_d" value="$(var pid_hyp_d)"/>
+    </node>
     <!--<node pkg="joy" exec="joy_node"/>-->
     <node pkg="rviz2" exec="rviz2" args="-d $(find-pkg-prefix sar_controller)/share/sar_controller/config/cub_sim.config.rviz">
         <param name="use_sim_time" value="true"/>

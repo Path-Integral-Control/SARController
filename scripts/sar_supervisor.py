@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
+import os
+from datetime import datetime
+
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from rclpy.time import Time
 from geometry_msgs.msg import Twist, PoseStamped
@@ -90,6 +94,20 @@ class PIDPublisher(Node):
         # Set up Parameter
         self.declare_parameter("mocap_vehicle_id", "/sim")
         self.declare_parameter("frame_id", "/map")
+        self.declare_parameter("use_hyp_control_output", False)
+        self.declare_parameter("pid_main_p", 0.05)
+        self.declare_parameter("pid_main_d", 1.1)
+        self.declare_parameter("pid_hyp_p", 0.09)
+        self.declare_parameter("pid_hyp_d", 0.8)
+        pkg_share = get_package_share_directory("sar_controller")
+        src_log_path = os.path.abspath(
+            os.path.join(pkg_share, "../../../../src/sar_controller/logs")
+        )
+        fallback_log_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
+        )
+        default_log_path = src_log_path if os.path.isdir(os.path.dirname(src_log_path)) else fallback_log_path
+        self.declare_parameter("log_base_path", default_log_path)
 
         # self.pub_control_input = self.create_publisher(Twist, '/cmd_vel', 10)
         # self.pub_joy = self.create_publisher(Joy, '/auto_joy', 10)
@@ -97,6 +115,12 @@ class PIDPublisher(Node):
             Joy,
             self.get_parameter("mocap_vehicle_id").get_parameter_value().string_value
             + "/auto_joy",
+            10,
+        )
+        self.pub_joy_hyp = self.create_publisher(
+            Joy,
+            self.get_parameter("mocap_vehicle_id").get_parameter_value().string_value
+            + "/auto_joy_hyp",
             10,
         )
         self.sub_mocap = self.create_subscription(
@@ -140,7 +164,12 @@ class PIDPublisher(Node):
         self.yaw = 0.0
         self.time = 0
         self.dt = 0.01
-        self.tracker = SARTracker(self.dt, "sim")
+        self.tracker_main = SARTracker(self.dt, "sim")
+        self.tracker_hyp = SARTracker(self.dt, "sim")
+        self.main_p = self.get_parameter("pid_main_p").get_parameter_value().double_value
+        self.main_d = self.get_parameter("pid_main_d").get_parameter_value().double_value
+        self.hyp_p = self.get_parameter("pid_hyp_p").get_parameter_value().double_value
+        self.hyp_d = self.get_parameter("pid_hyp_d").get_parameter_value().double_value
         self.current_WP_ind = 0  # Starting WP index
         self.last_WP_ind = 1  # Last Waypoint Index, this gets overwritten later
 
@@ -177,6 +206,10 @@ class PIDPublisher(Node):
         self.rudder = 0.0
         self.elev = 0.0  # elevator command (negative=elev_down --> pitches up)
         self.aileron = 0.0  # roll
+        self.aileron_hyp = 0.0
+        self.elev_hyp = 0.0
+        self.throttle_hyp = 0.7
+        self.rudder_hyp = 0.0
         self.trail_size = 1000
         self.x_est = None
         self.prev_x = None
@@ -236,6 +269,23 @@ class PIDPublisher(Node):
             "r_est": 0.0,
         }
         self.prev_t = None
+        self.qx = 0.0
+        self.qy = 0.0
+        self.qz = 0.0
+        self.qw = 1.0
+
+        log_base_path = self.get_parameter("log_base_path").get_parameter_value().string_value
+        os.makedirs(log_base_path, exist_ok=True)
+        now = datetime.now()
+        self.current_log_dir = os.path.join(log_base_path, now.strftime("%Y%m%d_%H%M%S"))
+        os.makedirs(self.current_log_dir, exist_ok=True)
+        self.state_log_file = os.path.join(self.current_log_dir, "state_log.csv")
+        self.state_log_fd = open(self.state_log_file, "w")
+        self.state_log_fd.write(
+            "timestamp, x,y,z, qx,qy,qz,qw, vx,vy,vz, v_total, gamma, p,q,r, roll,pitch,yaw, aileron,elevator,throttle,rudder, flight_mode, controller_mode\n"
+        )
+        self.state_log_fd.flush()
+        self.log_count = 0
 
     @staticmethod
     def _angdiff(a, b):
@@ -269,7 +319,8 @@ class PIDPublisher(Node):
         # Trigger to call to reload param and gains
         # ros2 service call /reload_gains std_srvs/srv/Trigger
         try:
-            self.controller.reload_gains()
+            self.tracker_main.reload_gains()
+            self.tracker_hyp.reload_gains()
             response.success = True
             response.message = "Gains reloaded successfully."
         except Exception as e:
@@ -296,6 +347,7 @@ class PIDPublisher(Node):
         self.y = msg.pose.pose.position.y
         self.z = msg.pose.pose.position.z
         q = msg.pose.pose.orientation
+        self.qx, self.qy, self.qz, self.qw = q.x, q.y, q.z, q.w
         (self.roll, self.pitch, self.yaw) = euler_from_quaternion([q.x, q.y, q.z, q.w])
 
         # Initialize on first time step
@@ -384,6 +436,33 @@ class PIDPublisher(Node):
     def logger_callback(self, string):
         self.get_logger().info(string)
 
+    def _build_joy_msg(self, aileron, elev, throttle, rudder):
+        joy_msg = Joy()
+        joy_msg.axes = [0.0] * 5
+        joy_msg.axes[0] = float(aileron)
+        joy_msg.axes[1] = float(elev)
+        joy_msg.axes[2] = float(throttle)
+        joy_msg.axes[3] = float(rudder)
+        joy_msg.axes[4] = 2000.0
+        return joy_msg
+
+    def _write_control_log(self, timestamp, joy_msg, controller_mode):
+        def _f(v):
+            return float("nan") if v is None else v
+
+        self.state_log_fd.write(
+            f"{timestamp},"
+            f"{_f(self.x_est)},{_f(self.y_est)},{_f(self.z_est)},"
+            f"{self.qx},{self.qy},{self.qz},{self.qw},"
+            f"{_f(self.vx_est)},{_f(self.vy_est)},{_f(self.vz_est)},{_f(self.v_est)},"
+            f"{_f(self.gamma_est)},"
+            f"{_f(self.p_est)},{_f(self.q_est)},{_f(self.r_est)},"
+            f"{_f(self.roll_est)},{_f(self.pitch_est)},{_f(self.yaw_est)},"
+            f"{joy_msg.axes[0]},{joy_msg.axes[1]},"
+            f"{joy_msg.axes[2]},{joy_msg.axes[3]},"
+            f"{self.flight_mode},{controller_mode}\n"
+        )
+
     def pub_sports_cub(self):
         self.last_WP_ind = len(self.waypoints)
 
@@ -430,6 +509,10 @@ class PIDPublisher(Node):
             self.elev = ca.if_else(
                 self.v_est < v_to, e_down, ca.fmin(e_up, self.elev + e_rate * self.dt)
             )
+            self.aileron_hyp = self.aileron
+            self.elev_hyp = self.elev
+            self.throttle_hyp = self.throttle
+            self.rudder_hyp = self.rudder
 
         # Enforce Looping in cruise
         if self.current_WP_ind == self.last_WP_ind:
@@ -454,17 +537,30 @@ class PIDPublisher(Node):
             else:
                 v_array = [self.vx_est, self.vy_est]
 
-                rate, speed, alti = (
+                rate_main, speed, alti = (
                     self.planner.plan(
                         np.array([self.x, self.y]),
                         np.array(v_array),
-                        logger=self.logger_callback
+                        logger=self.logger_callback,
+                        p=self.main_p,
+                        d=self.main_d,
                     )
+                )
+                rate_hyp, _, _ = self.planner.plan(
+                    np.array([self.x, self.y]),
+                    np.array(v_array),
+                    p=self.hyp_p,
+                    d=self.hyp_d,
                 )
 
                 self.aileron, self.elev, self.throttle, self.rudder = (
-                    self.tracker.compute_control(
-                        rate, speed, alti, self.actual_data#, logger=self.logger_callback
+                    self.tracker_main.compute_control(
+                        rate_main, speed, alti, self.actual_data
+                    )
+                )
+                self.aileron_hyp, self.elev_hyp, self.throttle_hyp, self.rudder_hyp = (
+                    self.tracker_hyp.compute_control(
+                        rate_hyp, speed, alti, self.actual_data
                     )
                 )
                 #self.aileron += self.anoise * 2
@@ -531,17 +627,35 @@ class PIDPublisher(Node):
         ########## SET CONTROL SIGNALS ###########
 
         # Set Channel Messages
-        joy_msg = Joy()
-        joy_msg.axes = [0.0] * 5
+        joy_msg_main = self._build_joy_msg(
+            self.aileron, self.elev, self.throttle, self.rudder
+        )
+        joy_msg_hyp = self._build_joy_msg(
+            self.aileron_hyp, self.elev_hyp, self.throttle_hyp, self.rudder_hyp
+        )
+        use_hyp_control = (
+            self.get_parameter("use_hyp_control_output").get_parameter_value().bool_value
+        )
+        joy_msg_active = joy_msg_hyp if use_hyp_control else joy_msg_main
 
-        # Cub Control PPM AETR
-        joy_msg.axes[0] = self.aileron
-        joy_msg.axes[1] = self.elev
-        joy_msg.axes[2] = self.throttle
-        joy_msg.axes[3] = self.rudder
-        joy_msg.axes[4] = 2000  # Force onboard stabilizing
+        # Always publish shadow output for comparison, select one for actual control.
+        self.pub_joy_hyp.publish(joy_msg_hyp)
+        self.pub_joy.publish(joy_msg_active)
 
-        self.pub_joy.publish(joy_msg)
+        # Keep class command fields aligned with the active control output.
+        self.aileron = joy_msg_active.axes[0]
+        self.elev = joy_msg_active.axes[1]
+        self.throttle = joy_msg_active.axes[2]
+        self.rudder = joy_msg_active.axes[3]
+
+        timestamp = self.get_clock().now().nanoseconds / 1e9
+        main_mode = "main_active" if not use_hyp_control else "main_shadow"
+        hyp_mode = "hyp_active" if use_hyp_control else "hyp_shadow"
+        self._write_control_log(timestamp, joy_msg_main, main_mode)
+        self._write_control_log(timestamp, joy_msg_hyp, hyp_mode)
+        if self.log_count % 30 == 0:
+            self.state_log_fd.flush()
+        self.log_count += 1
 
         # Append current position to the list for display
         self.x_list.append(self.x)
@@ -601,6 +715,12 @@ class PIDPublisher(Node):
             pose.pose.orientation.z = np.sin(yaw / 2)
             msg_path.poses.append(pose)
         self.pub_path.publish(msg_path)
+
+    def destroy_node(self):
+        if hasattr(self, "state_log_fd") and self.state_log_fd:
+            self.state_log_fd.flush()
+            self.state_log_fd.close()
+        return super().destroy_node()
 
 
 def main(args=None):
